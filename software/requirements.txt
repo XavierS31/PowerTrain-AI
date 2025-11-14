@@ -1,0 +1,27 @@
+# PowerTrain AI - Battery Health Prediction System
+# Python dependencies
+
+# Core ML/AI
+torch>=2.0.0
+numpy>=1.24.0
+pandas>=2.0.0
+scikit-learn>=1.3.0
+
+# Data processing
+scipy>=1.11.0
+
+# Visualization
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# Serial communication
+pyserial>=3.5
+
+# Jupyter notebooks
+jupyter>=1.0.0
+ipykernel>=6.25.0
+
+# Utilities
+tqdm>=4.66.0
+pyyaml>=6.0
+
