@@ -30,7 +30,7 @@ app = Flask(__name__)
 # ========== CONFIGURATION (from .env file) ==========
 # Choose which formats to save (set to True/False in .env file)
 SAVE_JSON = os.getenv('SAVE_JSON', 'true').lower() == 'true'
-SAVE_CSV = os.getenv('SAVE_CSV', 'false').lower() == 'true'
+SAVE_CSV = os.getenv('SAVE_CSV', 'true').lower() == 'true'  # CSV enabled by default
 SAVE_SQLITE = os.getenv('SAVE_SQLITE', 'false').lower() == 'true'
 SAVE_PARQUET = os.getenv('SAVE_PARQUET', 'false').lower() == 'true'
 SAVE_HDF5 = os.getenv('SAVE_HDF5', 'false').lower() == 'true'
@@ -39,8 +39,9 @@ SAVE_EXCEL = os.getenv('SAVE_EXCEL', 'false').lower() == 'true'
 # Server port from .env
 SERVER_PORT = int(os.getenv('SERVER_PORT', '5000'))
 
-# Data directory
-DATA_DIR = os.path.join(os.path.dirname(__file__), 'raw')
+# Data directory - save to software/data/raw_data
+# This file is in Software/data/, so raw_data is a subdirectory
+DATA_DIR = os.path.join(os.path.dirname(__file__), 'raw_data')
 
 # Ensure data directory exists
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -60,8 +61,10 @@ if SAVE_CSV and not os.path.exists(CSV_FILE):
         writer = csv.writer(f)
         writer.writerow([
             'timestamp', 'temperature', 'voltage', 'current', 'power',
-            'accelX', 'accelY', 'accelZ', 'gyroX', 'gyroY', 'gyroZ',
-            'distance', 'irDigital', 'irAnalog', 'received_at'
+            'accelX', 'accelY', 'accelZ', 'acceleration',  # Acceleration magnitude
+            'gyroX', 'gyroY', 'gyroZ',
+            'distance', 'speed',  # Speed from encoders (m/s)
+            'irDigital', 'irAnalog', 'received_at'
         ])
 
 # Initialize SQLite database if enabled
@@ -77,8 +80,10 @@ if SAVE_SQLITE:
             current REAL,
             power REAL,
             accelX REAL, accelY REAL, accelZ REAL,
+            acceleration REAL,
             gyroX REAL, gyroY REAL, gyroZ REAL,
             distance REAL,
+            speed REAL,
             irDigital INTEGER,
             irAnalog INTEGER,
             received_at TEXT
@@ -111,15 +116,17 @@ def save_to_csv(data):
                 data.get('timestamp', ''),
                 data.get('temperature', 0),
                 data.get('voltage', 0),
-                data.get('current', 0),
+                data.get('current', 0),  # From INA219
                 data.get('power', 0),
                 data.get('accelX', 0),
                 data.get('accelY', 0),
                 data.get('accelZ', 0),
+                data.get('acceleration', 0),  # Acceleration magnitude from MPU6050
                 data.get('gyroX', 0),
                 data.get('gyroY', 0),
                 data.get('gyroZ', 0),
                 data.get('distance', 0),
+                data.get('speed', 0),  # Speed from encoders (m/s)
                 data.get('irDigital', 0),
                 data.get('irAnalog', 0),
                 data.get('received_at', '')
@@ -133,9 +140,9 @@ def save_to_sqlite(data):
         cursor.execute('''
             INSERT INTO sensor_data 
             (timestamp, temperature, voltage, current, power,
-             accelX, accelY, accelZ, gyroX, gyroY, gyroZ,
-             distance, irDigital, irAnalog, received_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             accelX, accelY, accelZ, acceleration, gyroX, gyroY, gyroZ,
+             distance, speed, irDigital, irAnalog, received_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             data.get('timestamp', 0),
             data.get('temperature', 0),
@@ -145,10 +152,12 @@ def save_to_sqlite(data):
             data.get('accelX', 0),
             data.get('accelY', 0),
             data.get('accelZ', 0),
+            data.get('acceleration', 0),
             data.get('gyroX', 0),
             data.get('gyroY', 0),
             data.get('gyroZ', 0),
             data.get('distance', 0),
+            data.get('speed', 0),
             data.get('irDigital', 0),
             data.get('irAnalog', 0),
             data.get('received_at', '')

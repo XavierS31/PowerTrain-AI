@@ -22,6 +22,7 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include <Encoder.h>
 
 // ========== MOTOR CONTROL ==========
 #define MOTOR_STBY 27
@@ -62,6 +63,12 @@ int currentLeftSpeed = 0;
 #define IR_DO 36
 #define IR_AO 39
 
+// Encoder pins (Quadrature encoders for speed measurement)
+#define ENCODER_LEFT_A 32
+#define ENCODER_LEFT_B 33
+#define ENCODER_RIGHT_A 35
+#define ENCODER_RIGHT_B 14
+
 // ========== OBSTACLE AVOIDANCE (from config.h) ==========
 NewPing sonar(HC_TRIG, HC_ECHO, 200);  // Max distance 200cm
 #define OBSTACLE_DISTANCE OBSTACLE_DISTANCE_CM
@@ -74,6 +81,21 @@ ESP32AnalogRead adc;
 Adafruit_INA219 ina219;
 Adafruit_MPU6050 mpu;
 
+// Encoder objects for speed measurement
+Encoder encoderLeft(ENCODER_LEFT_A, ENCODER_LEFT_B);
+Encoder encoderRight(ENCODER_RIGHT_A, ENCODER_RIGHT_B);
+
+// Encoder variables for speed calculation
+long lastLeftEncoderCount = 0;
+long lastRightEncoderCount = 0;
+unsigned long lastSpeedCalcTime = 0;
+float currentSpeed_mps = 0.0;  // Speed in meters per second
+
+// Encoder parameters (adjust based on your motor/encoder specs)
+#define ENCODER_PULSES_PER_REVOLUTION 20  // Typical value, adjust to your encoder
+#define WHEEL_DIAMETER_CM 6.5  // Wheel diameter in cm, adjust to your car
+#define WHEEL_CIRCUMFERENCE_CM (3.14159 * WHEEL_DIAMETER_CM)  // cm per revolution
+
 // Sensor initialization flags
 bool ina219_initialized = false;
 bool mpu_initialized = false;
@@ -82,9 +104,8 @@ bool mpu_initialized = false;
 const char* ssid = WIFI_SSID;
 const char* password = WIFI_PASSWORD;
 
-// Build server URL from config
+// Build server URL from config (will be initialized in setup())
 char serverURL[100];
-sprintf(serverURL, "http://%s:%d/api/data", SERVER_IP, SERVER_PORT);
 
 // ========== DATA LOGGING (from config.h) ==========
 unsigned long lastSensorRead = 0;
@@ -101,6 +122,8 @@ struct SensorData {
   float accelX, accelY, accelZ;
   float gyroX, gyroY, gyroZ;
   float distance;
+  float speed;           // Motor speed (PWM value 0-255)
+  float acceleration;    // Acceleration magnitude
   int irDigital;
   int irAnalog;
   unsigned long timestamp;
@@ -130,6 +153,9 @@ void rotateMotor(int rightMotorSpeed, int leftMotorSpeed) {
   
   int combinedSpeed = (currentRightSpeed + currentLeftSpeed) / 2;
   
+  // Ensure STBY is HIGH (motors enabled)
+  digitalWrite(MOTOR_STBY, HIGH);
+  
   if (combinedSpeed < 0) {
     digitalWrite(MOTOR_AIN1, LOW);
     digitalWrite(MOTOR_AIN2, HIGH);
@@ -145,7 +171,23 @@ void rotateMotor(int rightMotorSpeed, int leftMotorSpeed) {
   if (pwmValue > 0 && pwmValue < MIN_MOTOR_SPEED) {
     pwmValue = MIN_MOTOR_SPEED;
   }
+  
+  // Write PWM value
   ledcWrite(motorPWMSpeedChannel, pwmValue);
+  
+  // Debug output (only occasionally to avoid spam)
+  static unsigned long lastMotorDebug = 0;
+  if (millis() - lastMotorDebug > 1000) {
+    Serial.print("Motor PWM: ");
+    Serial.print(pwmValue);
+    Serial.print("/255, AIN1: ");
+    Serial.print(digitalRead(MOTOR_AIN1));
+    Serial.print(", AIN2: ");
+    Serial.print(digitalRead(MOTOR_AIN2));
+    Serial.print(", STBY: ");
+    Serial.println(digitalRead(MOTOR_STBY));
+    lastMotorDebug = millis();
+  }
 }
 
 void stopMotors() {
@@ -153,7 +195,13 @@ void stopMotors() {
 }
 
 void driveForward(int speed) {
+  Serial.print("driveForward called with speed: ");
+  Serial.println(speed);
   rotateMotor(speed, speed);
+  Serial.print("Motor speeds - Right: ");
+  Serial.print(currentRightSpeed);
+  Serial.print(", Left: ");
+  Serial.println(currentLeftSpeed);
 }
 
 void turnLeft(int speed) {
@@ -174,17 +222,62 @@ SensorData readAllSensors() {
   data.temperature = tempSensor.getTempCByIndex(0);
   
   // Voltage
-  float adcValue = adc.readVoltage(VOLTAGE_SENSE_PIN);
+  float adcValue = adc.readVoltage();
   data.voltage = adcValue * 5.0;  // Adjust multiplier based on voltage divider ratio
   
   // Current and Power (INA219)
-  if (ina219_initialized) {
-    data.current = ina219.getCurrent_mA() / 1000.0;  // Convert to Amps
-    data.power = ina219.getPower_mW() / 1000.0;       // Convert to Watts
+  // Always try to read, even if initialization reported failure
+  // Sometimes the sensor works but initialization check fails
+  float current_mA = ina219.getCurrent_mA();
+  float power_mW = ina219.getPower_mW();
+  
+  if (ina219_initialized || (current_mA != 0 || power_mW != 0)) {
+    data.current = current_mA / 1000.0;  // Convert to Amps
+    data.power = power_mW / 1000.0;       // Convert to Watts
+    // If we got a reading, mark as initialized for future
+    if (!ina219_initialized && (current_mA != 0 || power_mW != 0)) {
+      ina219_initialized = true;
+      Serial.println("INA219 working (late initialization)");
+    }
   } else {
     data.current = 0;
     data.power = 0;
   }
+  
+  // Calculate speed from encoder readings (actual speed in m/s)
+  unsigned long currentTime = millis();
+  if (lastSpeedCalcTime > 0 && (currentTime - lastSpeedCalcTime) >= 100) {  // Calculate every 100ms
+    long leftCount = encoderLeft.read();
+    long rightCount = encoderRight.read();
+    
+    // Calculate encoder change (counts)
+    long leftDelta = abs(leftCount - lastLeftEncoderCount);
+    long rightDelta = abs(rightCount - lastRightEncoderCount);
+    long avgDelta = (leftDelta + rightDelta) / 2;
+    
+    // Calculate time delta (seconds)
+    float timeDelta = (currentTime - lastSpeedCalcTime) / 1000.0;
+    
+    // Calculate speed: (encoder_counts / pulses_per_rev) * (wheel_circumference / time)
+    // Convert to meters per second
+    float revolutions = (float)avgDelta / ENCODER_PULSES_PER_REVOLUTION;
+    float distance_cm = revolutions * WHEEL_CIRCUMFERENCE_CM;
+    currentSpeed_mps = (distance_cm / 100.0) / timeDelta;  // Convert cm to m, divide by time
+    
+    // Update last values
+    lastLeftEncoderCount = leftCount;
+    lastRightEncoderCount = rightCount;
+    lastSpeedCalcTime = currentTime;
+  } else if (lastSpeedCalcTime == 0) {
+    // First reading - initialize
+    lastLeftEncoderCount = encoderLeft.read();
+    lastRightEncoderCount = encoderRight.read();
+    lastSpeedCalcTime = currentTime;
+    currentSpeed_mps = 0.0;
+  }
+  
+  // Store speed in m/s (can also convert to km/h or mph if needed)
+  data.speed = currentSpeed_mps;  // Speed in meters per second
   
   // Accelerometer and Gyroscope (MPU6050)
   if (mpu_initialized) {
@@ -196,13 +289,20 @@ SensorData readAllSensors() {
       data.gyroX = gyro.gyro.x;
       data.gyroY = gyro.gyro.y;
       data.gyroZ = gyro.gyro.z;
+      
+      // Calculate acceleration magnitude
+      data.acceleration = sqrt(accel.acceleration.x * accel.acceleration.x + 
+                                accel.acceleration.y * accel.acceleration.y + 
+                                accel.acceleration.z * accel.acceleration.z);
     } else {
       data.accelX = data.accelY = data.accelZ = 0;
       data.gyroX = data.gyroY = data.gyroZ = 0;
+      data.acceleration = 0;
     }
   } else {
     data.accelX = data.accelY = data.accelZ = 0;
     data.gyroX = data.gyroY = data.gyroZ = 0;
+    data.acceleration = 0;
   }
   
   // Distance (HC-SR04)
@@ -218,8 +318,17 @@ SensorData readAllSensors() {
 
 // ========== WIFI DATA TRANSMISSION ==========
 void sendSensorData(SensorData data) {
+  // Try to send data, but don't block if WiFi is not connected
+  // Car should work standalone without WiFi
   if (WiFi.status() != WL_CONNECTED) {
-    return;
+    // Optionally try to reconnect WiFi (non-blocking)
+    static unsigned long lastWiFiReconnect = 0;
+    if (millis() - lastWiFiReconnect > 10000) {  // Try every 10 seconds
+      WiFi.disconnect();
+      WiFi.begin(ssid, password);
+      lastWiFiReconnect = millis();
+    }
+    return;  // Continue operation without WiFi
   }
   
   HTTPClient http;
@@ -227,7 +336,7 @@ void sendSensorData(SensorData data) {
   http.addHeader("Content-Type", "application/json");
   
   // Create JSON
-  StaticJsonDocument<512> doc;
+  JsonDocument doc;
   doc["timestamp"] = data.timestamp;
   doc["temperature"] = data.temperature;
   doc["voltage"] = data.voltage;
@@ -236,10 +345,13 @@ void sendSensorData(SensorData data) {
   doc["accelX"] = data.accelX;
   doc["accelY"] = data.accelY;
   doc["accelZ"] = data.accelZ;
+  doc["acceleration"] = data.acceleration;  // Acceleration magnitude
   doc["gyroX"] = data.gyroX;
   doc["gyroY"] = data.gyroY;
   doc["gyroZ"] = data.gyroZ;
   doc["distance"] = data.distance;
+  doc["speed"] = data.speed;  // Speed in m/s from encoders
+  doc["acceleration"] = data.acceleration;  // Acceleration magnitude from MPU6050
   doc["irDigital"] = data.irDigital;
   doc["irAnalog"] = data.irAnalog;
   
@@ -301,7 +413,9 @@ void setup() {
   
   // Initialize TFT Display
   initTFT();
-  displayPerformance(0);  // Start at 0%
+  // Display hardcoded static values immediately (no sensor dependency)
+  // 50% Fair, 0.7 ohm RINT, 6.0V (4-pack AA), 30°C temp
+  displayPerformance(50.0, 0.7, 6.0, 30.0);  // 50% Fair, hardcoded values
   
   // Initialize motor pins
   pinMode(MOTOR_AIN1, OUTPUT);
@@ -323,11 +437,14 @@ void setup() {
   adc.attach(VOLTAGE_SENSE_PIN);
   
   // Initialize INA219
+  // INA219 has fixed I2C address (0x40), but begin() doesn't take address parameter
+  // The library automatically uses the default address
   if (ina219.begin()) {
     ina219_initialized = true;
     Serial.println("INA219 initialized");
   } else {
-    Serial.println("INA219 not found!");
+    Serial.println("INA219 not found! Check I2C connections.");
+    Serial.println("INA219 default address is 0x40");
     ina219_initialized = false;
   }
   
@@ -345,6 +462,14 @@ void setup() {
   // Initialize IR sensor pins
   pinMode(IR_DO, INPUT);
   pinMode(IR_AO, INPUT);
+  
+  // Initialize encoder pins (Encoder library handles pin setup)
+  // Encoders are interrupt-driven, no manual pinMode needed
+  encoderLeft.write(0);  // Reset encoder counts
+  encoderRight.write(0);
+  lastLeftEncoderCount = 0;
+  lastRightEncoderCount = 0;
+  lastSpeedCalcTime = 0;
   
   // Connect to WiFi
   WiFi.begin(ssid, password);
@@ -365,13 +490,53 @@ void setup() {
     Serial.println("WiFi connection failed - continuing without WiFi");
   }
   
+  // Build server URL from config
+  snprintf(serverURL, sizeof(serverURL), "http://%s:%d/api/data", SERVER_IP, SERVER_PORT);
+  Serial.print("Server URL: ");
+  Serial.println(serverURL);
+  
   Serial.println("Autonomous car ready!");
   Serial.println("Speed: MEDIUM (change with Serial commands: L/M/H)");
+  
+  // Start driving immediately (autonomous mode)
+  Serial.println("Starting autonomous driving...");
+  
+  // Ensure motor control pins are properly set
+  digitalWrite(MOTOR_STBY, HIGH);  // Enable motors
+  delay(100);  // Small delay to ensure pin is set
+  
+  Serial.print("Motor STBY pin state: "); Serial.println(digitalRead(MOTOR_STBY));
+  Serial.print("Current speed setting: "); Serial.println(currentSpeed);
+  
+  // Initialize motor speeds to 0
+  currentRightSpeed = 0;
+  currentLeftSpeed = 0;
+  
+  // Force immediate motor start (bypass acceleration for initial start)
+  digitalWrite(MOTOR_AIN1, HIGH);
+  digitalWrite(MOTOR_AIN2, LOW);
+  int pwmValue = currentSpeed;
+  if (pwmValue > 0 && pwmValue < MIN_MOTOR_SPEED) {
+    pwmValue = MIN_MOTOR_SPEED;
+  }
+  ledcWrite(motorPWMSpeedChannel, pwmValue);
+  currentRightSpeed = currentSpeed;
+  currentLeftSpeed = currentSpeed;
+  
+  delay(200);  // Give motors time to start
+  
+  Serial.println("Motors started!");
+  Serial.print("Motor PWM value: "); Serial.println(pwmValue);
+  Serial.print("Motor speeds - Right: ");
+  Serial.print(currentRightSpeed);
+  Serial.print(", Left: ");
+  Serial.println(currentLeftSpeed);
+  Serial.println("Car should now be driving forward!");
 }
 
 // ========== MAIN LOOP ==========
 void loop() {
-  // Check for speed change via Serial
+  // Check for speed change via Serial (non-blocking)
   if (Serial.available()) {
     char cmd = Serial.read();
     if (cmd == 'L' || cmd == 'l') {
@@ -387,38 +552,43 @@ void loop() {
       stopMotors();
       Serial.println("Stopped");
     }
+    // Clear any remaining serial buffer
+    while (Serial.available()) Serial.read();
   }
   
-  // Autonomous driving with obstacle avoidance
-  autonomousDrive();
+  // Autonomous driving with obstacle avoidance (runs continuously)
+  // Run autonomous drive every 100ms (10 times per second) - frequent enough for smooth control
+  static unsigned long lastAutonomousCall = 0;
+  if (millis() - lastAutonomousCall >= 100) {  // Run every 100ms
+    autonomousDrive();
+    lastAutonomousCall = millis();
+  }
   
   // Read and send sensor data (5 times per second)
   if (millis() - lastSensorRead >= SENSOR_READ_INTERVAL) {
     SensorData data = readAllSensors();
     sendSensorData(data);
     
-    // Calculate and update TFT performance display
-    float performance = calculatePerformance(
-      data.voltage, 
-      data.current, 
-      data.distance, 
-      data.accelX, 
-      data.accelY, 
-      data.accelZ
-    );
-    
-    // Update TFT display (every 500ms to avoid flickering)
-    if (millis() - lastTFTUpdate >= TFT_UPDATE_INTERVAL) {
-      updatePerformanceDisplay(performance);
-      lastTFTUpdate = millis();
-    }
+  // Update TFT display with hardcoded values (every 2 seconds to avoid flickering)
+  // Using hardcoded static values - no sensor data dependency
+  if (millis() - lastTFTUpdate >= 2000) {  // Update every 2 seconds
+    // Hardcoded values: 50% performance, 0.7 ohm RINT, 6.0V (4-pack AA), 30°C temp
+    displayPerformance(50.0, 0.7, 6.0, 30.0);  // Hardcoded static values
+    lastTFTUpdate = millis();
+  }
     
     // Also print to Serial for debugging
     Serial.print("Temp: ");
     Serial.print(data.temperature);
     Serial.print("°C, Voltage: ");
     Serial.print(data.voltage);
-    Serial.print("V, Distance: ");
+    Serial.print("V, Current: ");
+    Serial.print(data.current);
+    Serial.print("A, Speed: ");
+    Serial.print(data.speed);
+    Serial.print(" m/s, Accel: ");
+    Serial.print(data.acceleration);
+    Serial.print(" m/s², Distance: ");
     Serial.print(data.distance);
     Serial.print(" cm, Performance: ");
     Serial.print(performance);

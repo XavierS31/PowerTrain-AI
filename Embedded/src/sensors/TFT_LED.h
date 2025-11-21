@@ -12,14 +12,17 @@ Functions to display Car Driving Behavior Performance on TFT screen
 void initTFT();
 
 // Display Car Driving Behavior Performance (0-100%)
-void displayPerformance(float performancePercent);
+void displayPerformance(float performancePercent, float rint, float voltage, float current);
 
 // Update performance display (call this in your main loop)
-void updatePerformanceDisplay(float performancePercent);
+void updatePerformanceDisplay(float performancePercent, float rint, float voltage, float current);
 
 // Calculate performance from sensor data
 float calculatePerformance(float voltage, float current, float distance, 
                          float accelX, float accelY, float accelZ);
+
+// Get the calculated Rint value
+float getCalculatedRint();
 
 #endif // TFT_LED_H
 
