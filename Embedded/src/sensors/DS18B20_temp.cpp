@@ -6,7 +6,7 @@ It is connected to the ESP32 GPIO 15.
 */
 
 // Required Libraries
-#include <Arduino.h>
+#include "../ESP32_car.h"
 #include <OneWire.h>
 #include <DallasTemperature.h>
 

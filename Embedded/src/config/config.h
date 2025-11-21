@@ -1,0 +1,38 @@
+/*
+ * Configuration Header File
+ * 
+ * IMPORTANT: This file is generated from .env file
+ * To update: Run 'python scripts/generate_config.py' from project root
+ * Or manually edit the values below
+ * 
+ * DO NOT commit sensitive data to version control
+ */
+
+#ifndef CONFIG_H
+#define CONFIG_H
+
+// ========== WiFi Configuration ==========
+#define WIFI_SSID "YOUR_WIFI_SSID"
+#define WIFI_PASSWORD "YOUR_WIFI_PASSWORD"
+
+// ========== Server Configuration ==========
+#define SERVER_IP "192.168.1.100"
+#define SERVER_PORT 5000
+
+// ========== Motor Speed Levels (PWM 0-255) ==========
+#define MOTOR_SPEED_LOW 85
+#define MOTOR_SPEED_MEDIUM 170
+#define MOTOR_SPEED_HIGH 255
+
+// ========== Obstacle Detection ==========
+#define OBSTACLE_DISTANCE_CM 30
+#define TURN_DURATION_MS 500
+
+// ========== Sensor Reading Interval (milliseconds) ==========
+#define SENSOR_READ_INTERVAL_MS 200
+
+// ========== TFT Update Interval (milliseconds) ==========
+#define TFT_UPDATE_INTERVAL_MS 500
+
+#endif // CONFIG_H
+

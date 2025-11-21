@@ -6,7 +6,7 @@ It is connected to the ESP32 GPIO 21 and 22.
 */
 
 // Required Libraries
-#include <Arduino.h>
+#include "../ESP32_car.h"
 #include <Wire.h>                  // I2C communication library
 
 // Pin Definitions

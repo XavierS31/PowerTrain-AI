@@ -1,0 +1,44 @@
+# Environment files
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+
+# Arduino/ESP32
+*.hex
+*.elf
+*.bin
+*.map
+*.eep
+*.bak
+*.swp
+*~.ino
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data files (optional - uncomment if you don't want to track data)
+# software/data/raw/*.jsonl
+# software/data/raw/*.csv
+# software/data/raw/*.db
+# software/data/raw/*.parquet
+# software/data/raw/*.h5
+# software/data/raw/*.xlsx
+

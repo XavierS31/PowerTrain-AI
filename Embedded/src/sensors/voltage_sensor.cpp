@@ -7,7 +7,7 @@ It is a simple voltage divider circuit.
 */
 
 // Required Libraries
-#include <Arduino.h>
+#include "../ESP32_car.h"
 #include <ESP32AnalogRead.h>  // Enhanced ADC reading for ESP32
 
 // Pin Definition

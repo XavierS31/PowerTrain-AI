@@ -13,7 +13,7 @@ TB6612FNG Specifications:
 */
 
 // Required Libraries
-#include <Arduino.h>
+#include "../ESP32_car.h"
 // Note: TB6612FNG uses ESP32 PWM functions (ledcWrite)
 // No external library required - uses built-in ESP32 PWM
 

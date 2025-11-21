@@ -1,3 +1,4 @@
+
 #define CUSTOM_SETTINGS
 #define INCLUDE_GAMEPAD_MODULE
 #include <DabbleESP32.h>
@@ -138,8 +139,10 @@ void setUpPinModes()
 
 void setup()
 {
+  Serial.begin(115200);
   setUpPinModes();
-  Dabble.begin("MyBluetoothCar"); 
+  Dabble.begin("MyBluetoothCar");
+  Serial.println("Bluetooth Car Ready! Connect via Dabble app.");
 }
 
 void loop()
@@ -228,3 +231,4 @@ void loop()
   // Small delay for smooth operation
   delay(10);
 }
+

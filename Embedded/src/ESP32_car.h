@@ -13,7 +13,15 @@ Sensors:
 
 SHPE Competitions FALL 2025
 
+NOTE: This is a reference header file listing all required libraries.
+Include this file in your main .ino sketch to get all sensor libraries.
+
+Usage in your .ino file:
+  #include "src/ESP32_car.h"
 */
+
+#ifndef ESP32_CAR_H
+#define ESP32_CAR_H
 
 // ========== CORE ESP32 LIBRARIES ==========
 #include <Arduino.h>              // Core ESP32 functions
@@ -53,4 +61,6 @@ SHPE Competitions FALL 2025
 // ========== MOTOR DRIVER (TB6612FNG) ==========
 // No external library required - uses ESP32 PWM functions
 // Use ledcWrite() for PWM control (16 channels available on ESP32)
+
+#endif // ESP32_CAR_H
 
