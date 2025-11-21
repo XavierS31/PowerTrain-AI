@@ -4,6 +4,8 @@ PyTorch model definition for battery health prediction
 
 import torch
 import torch.nn as nn
+import pandas as pd
+import numpy as np
 
 
 class BatteryHealthModel(nn.Module):
