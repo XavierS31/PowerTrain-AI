@@ -1,84 +1,191 @@
-# PowerTrain AI - Battery Health Prediction System
+# PowerTrain AI - Software Module
 
-Machine learning system for predicting battery health from ESP32 sensor data.
+Machine learning system for predicting performance levels from ESP32 sensor data.
 
 ## Project Structure
 
 ```
-software/
+Software/
 ├── data/
-│   ├── raw/            # Unprocessed ESP32 logs
-│   ├── processed/      # Cleaned data
-│   └── features/       # ML-ready datasets (X, y)
+│   ├── raw_data/              # Raw sensor data from ESP32
+│   │   └── driving_behavior_dataset.csv
+│   ├── processed/             # Preprocessed data ready for ML
+│   ├── database/              # SQLite database
+│   │   └── driving_behavior.db
+│   └── data_receiver.py       # Flask server to receive ESP32 data
 │
-├── models/
-│   ├── saved/          # Trained models
-│   └── results/        # Metrics, plots
+├── models/                    # Trained models and results
+│   ├── mlp_model.joblib      # MLP (sklearn) model
+│   ├── scaler.joblib         # Feature scaler for MLP
+│   ├── random_forest_model.joblib
+│   ├── random_forest_scaler.joblib
+│   ├── pytorch_nn_model.pth  # PyTorch neural network
+│   ├── pytorch_scaler.joblib
+│   └── results/               # Evaluation plots and reports
 │
-├── notebooks/
-│   ├── 01_explore.ipynb    # Data exploration
-│   ├── 02_features.ipynb   # Feature engineering
-│   ├── 03_train.ipynb      # Model training
-│   └── 04_eval.ipynb       # Model evaluation
-│
-├── src/
-│   ├── ingestion.py        # Serial reading, log syncing
-│   ├── preprocess.py       # Cleaning + normalization
-│   ├── features.py         # Rint, motion, engineered features
-│   ├── model.py            # PyTorch model definition
-│   ├── train.py            # Training loop
-│   ├── evaluate.py         # Evaluation metrics + plots
-│   ├── infer.py            # Real-time battery predictions
-│   └── utils.py            # Filters, helpers, constants
-│
-├── requirements.txt
-└── README.md
+└── src/
+    ├── create_database.py     # Create SQLite database from CSV
+    ├── preprocessing.py       # Process raw data for ML training
+    ├── save_model.py          # Train and save all three models
+    ├── train_pytorch_nn.py    # Train PyTorch neural network
+    ├── train_random_forest.py # Train Random Forest
+    ├── train_mlp.py           # Train MLP (sklearn)
+    ├── model.py               # Original MLP training script
+    └── evaluate_models.py    # Evaluate all models
 ```
 
 ## Installation
 
-1. Install dependencies:
+Install required dependencies:
+
 ```bash
-pip install -r requirements.txt
+pip install pandas numpy scikit-learn torch matplotlib seaborn joblib flask python-dotenv
 ```
 
-2. Set up Jupyter kernel:
+## Database Setup
+
+1. Create SQLite database and import data:
+
 ```bash
-python -m ipykernel install --user --name=powertrain-ai
+cd Software/src
+python create_database.py
 ```
 
-## Usage
+This creates `Software/data/database/driving_behavior.db` with the schema and imports data from CSV.
 
-### Data Ingestion
-```python
-from src.ingestion import read_serial_data
+## Model Training
 
-# Read data from ESP32
-for line in read_serial_data('COM3'):
-    print(line)
+### Train All Models
+
+Train all three models (MLP, PyTorch NN, Random Forest) at once:
+
+```bash
+cd Software/src
+python save_model.py
 ```
 
-### Training
-```python
-from src.train import train_model
+### Train Individual Models
 
-# Train model
-model, history = train_model(model, train_loader, val_loader, epochs=100, device='cuda')
+Train models individually:
+
+```bash
+# MLP (sklearn)
+python train_mlp.py
+
+# PyTorch Neural Network
+python train_pytorch_nn.py
+
+# Random Forest
+python train_random_forest.py
 ```
 
-### Inference
-```python
-from src.infer import predict_battery_health
+All models read from the SQLite database at `Software/data/database/driving_behavior.db`.
 
-# Make predictions
-predictions = predict_battery_health(model, features)
+## Model Evaluation
+
+Evaluate all trained models and compare performance:
+
+```bash
+cd Software/src
+python evaluate_models.py
 ```
 
-## Development
+This generates:
+- Confusion matrices for each model
+- Model comparison plots
+- Comprehensive evaluation report
 
-Follow the notebook sequence:
-1. `01_explore.ipynb` - Explore and understand the data
-2. `02_features.ipynb` - Engineer features
-3. `03_train.ipynb` - Train models
-4. `04_eval.ipynb` - Evaluate and compare models
+## Data Preprocessing
 
+Process raw sensor data for ML training:
+
+```bash
+cd Software/src
+python preprocessing.py --input sensor_data.csv --format csv
+```
+
+## Data Receiver Server
+
+Start the Flask server to receive sensor data from ESP32:
+
+```bash
+cd Software/data
+python data_receiver.py
+```
+
+The server provides:
+- `/api/data` - POST endpoint to receive sensor data
+- `/api/predict` - POST endpoint for ML predictions
+- `/api/status` - GET endpoint to check server status
+
+## Models
+
+### MLP (sklearn)
+- Architecture: 2 hidden layers (16, 8 neurons)
+- Framework: scikit-learn
+- Saved as: `mlp_model.joblib`
+
+### PyTorch Neural Network
+- Architecture: 2 hidden layers, 16 neurons each
+- Framework: PyTorch
+- Saved as: `pytorch_nn_model.pth`
+
+### Random Forest
+- Parameters: 100 trees, max depth 20
+- Framework: scikit-learn
+- Saved as: `random_forest_model.joblib`
+
+## Data Format
+
+All models expect the same input features:
+- InternalResistance
+- StartingInternalResistance
+- Voltage
+- Current
+- Temp
+- AccelX
+- AccelY
+- AccelCombined
+- Speed
+- Distance
+
+Target: Level (1-10 performance classification)
+
+## Workflow
+
+1. **Setup Database:**
+   ```bash
+   python create_database.py
+   ```
+
+2. **Train Models:**
+   ```bash
+   python save_model.py
+   ```
+
+3. **Evaluate Models:**
+   ```bash
+   python evaluate_models.py
+   ```
+
+4. **Start Data Receiver:**
+   ```bash
+   cd ../data
+   python data_receiver.py
+   ```
+
+5. **Use Predictions:**
+   - ESP32 sends sensor data to `/api/data`
+   - ESP32 requests predictions from `/api/predict`
+   - Server returns predicted performance level (1-10)
+
+## File Descriptions
+
+- `create_database.py` - Creates SQLite schema and imports CSV data
+- `preprocessing.py` - Processes raw sensor data into ML-ready format
+- `save_model.py` - Trains and saves all three ML models
+- `train_pytorch_nn.py` - PyTorch neural network training
+- `train_random_forest.py` - Random Forest training
+- `train_mlp.py` - MLP (sklearn) training
+- `evaluate_models.py` - Comprehensive model evaluation and comparison
+- `data_receiver.py` - Flask server for receiving data and providing predictions

@@ -1,6 +1,6 @@
 """
 Data Receiver Server for ESP32 Autonomous Car
-Receives sensor data via WiFi and saves to software/data/raw/
+Receives sensor data via WiFi and saves to software/data/
 
 Supported formats:
 - JSON/JSONL (default) - Human readable, easy to parse
@@ -18,6 +18,8 @@ import json
 import os
 import csv
 import sqlite3
+import numpy as np
+import joblib
 
 # Load environment variables from .env file
 # Look for .env in project root (2 levels up from this file)
@@ -100,6 +102,36 @@ hdf5_initialized = False
 
 # Initialize Excel (will be created on first write if enabled)
 excel_buffer = []
+
+# Load ML model and scaler for predictions
+MODELS_DIR = os.path.join(project_root, 'Software', 'models')
+MODEL_FILE = os.path.join(MODELS_DIR, 'mlp_model.joblib')
+SCALER_FILE = os.path.join(MODELS_DIR, 'scaler.joblib')
+
+mlp_model = None
+scaler = None
+
+def load_model():
+    """Load the trained ML model and scaler"""
+    global mlp_model, scaler
+    try:
+        if os.path.exists(MODEL_FILE) and os.path.exists(SCALER_FILE):
+            mlp_model = joblib.load(MODEL_FILE)
+            scaler = joblib.load(SCALER_FILE)
+            print(f"✓ ML model loaded from {MODEL_FILE}")
+            print(f"✓ Scaler loaded from {SCALER_FILE}")
+            return True
+        else:
+            print(f"⚠ Model files not found. Run save_model.py first.")
+            print(f"  Expected: {MODEL_FILE}")
+            print(f"  Expected: {SCALER_FILE}")
+            return False
+    except Exception as e:
+        print(f"Error loading model: {e}")
+        return False
+
+# Try to load model at startup
+load_model()
 
 def save_to_json(data):
     """Save data to JSON Lines format"""
@@ -279,6 +311,7 @@ def status():
     return jsonify({
         'status': 'running',
         'data_dir': DATA_DIR,
+        'model_loaded': mlp_model is not None,
         'formats_enabled': {
             'json': SAVE_JSON,
             'csv': SAVE_CSV,
@@ -288,6 +321,82 @@ def status():
             'excel': SAVE_EXCEL
         }
     }), 200
+
+@app.route('/api/predict', methods=['POST'])
+def predict():
+    """
+    Get ML model prediction from sensor data
+    Expects JSON with sensor readings, returns predicted performance level (1-10)
+    """
+    if mlp_model is None or scaler is None:
+        return jsonify({
+            'status': 'error',
+            'message': 'Model not loaded. Run save_model.py first.'
+        }), 503
+    
+    try:
+        data = request.get_json()
+        
+        # Extract raw sensor values
+        voltage = float(data.get('voltage', 0))
+        current = float(data.get('current', 0))
+        temp = float(data.get('temperature', 0))
+        accel_x = float(data.get('accelX', 0))
+        accel_y = float(data.get('accelY', 0))
+        accel_z = float(data.get('accelZ', 0))
+        speed = float(data.get('speed', 0))
+        distance = float(data.get('distance', 0)) / 100.0  # Convert cm to meters
+        
+        # Calculate derived features (same as preprocessing.py)
+        v_nominal = 6.0
+        internal_resistance = 0.0
+        if abs(current) > 0.01:
+            voltage_drop = v_nominal - voltage
+            internal_resistance = max(0.01, min(2.0, voltage_drop / current))
+        else:
+            internal_resistance = 0.1  # Default for zero current
+        
+        starting_internal_resistance = v_nominal / current if current > 0.01 else 0.1
+        accel_combined = np.sqrt(accel_x**2 + accel_y**2 + accel_z**2)
+        
+        # Prepare feature vector (must match training order)
+        features = np.array([[
+            internal_resistance,
+            starting_internal_resistance,
+            voltage,
+            current,
+            temp,
+            accel_x,
+            accel_y,
+            accel_combined,
+            speed,
+            distance
+        ]])
+        
+        # Scale features and predict
+        features_scaled = scaler.transform(features)
+        prediction = mlp_model.predict(features_scaled)[0]
+        prediction_proba = mlp_model.predict_proba(features_scaled)[0]
+        
+        # Get confidence (probability of predicted class)
+        confidence = float(prediction_proba[int(prediction) - 1])
+        
+        return jsonify({
+            'status': 'success',
+            'predicted_level': int(prediction),
+            'confidence': round(confidence, 3),
+            'probabilities': {
+                f'level_{i+1}': float(prediction_proba[i]) 
+                for i in range(len(prediction_proba))
+            }
+        }), 200
+        
+    except Exception as e:
+        print(f"Error making prediction: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
 
 if __name__ == '__main__':
     print(f"Data receiver server starting...")

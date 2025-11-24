@@ -62,9 +62,10 @@ python data_receiver.py
 
 ## 📚 Documentation
 
-- **Quick Start:** `Embedded/QUICK_START.md`
+- **Embedded Module:** `Embedded/README.md`
+- **Software Module:** `Software/README.md`
 - **Full Setup Guide:** `PLATFORMIO_SETUP.md`
-- **Environment Config:** `README_ENV.md`
+- **Security Guide:** `Software/data/SECURITY.md`
 
 ## 🔧 Features
 

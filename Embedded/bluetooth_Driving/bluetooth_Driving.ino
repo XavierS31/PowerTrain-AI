@@ -1,234 +1,278 @@
+/*
+ * Bluetooth Controlled Driving - Standalone Version
+ * 
+ * This is a minimal implementation for Bluetooth control of the car.
+ * No autonomous driving, no data logging, no WiFi.
+ * Just manual control via Bluetooth commands.
+ * 
+ * Usage:
+ * 1. Upload this to ESP32
+ * 2. Connect via Bluetooth (default name: "ESP32_Car")
+ * 3. Send commands: F/B/L/R/S (Forward/Backward/Left/Right/Stop)
+ * 4. Speed control: 1/2/3 (Low/Medium/High)
+ */
 
-#define CUSTOM_SETTINGS
-#define INCLUDE_GAMEPAD_MODULE
-#include <DabbleESP32.h>
+#include <Arduino.h>
+#include "BluetoothSerial.h"
 
-// TB6612FNG Motor Driver Pin Definitions
-// Two separate TB6612FNG drivers share the same control pins
-// Each driver controls 2 motors in series (connected to AO1, AO2 outputs)
+#if !defined(CONFIG_BT_ENABLED) || !defined(CONFIG_BLUEDROID_ENABLED)
+#error "Bluetooth is not enabled! Please run `make menuconfig` to enable it"
+#endif
 
-// Shared Control Pins (both TB6612FNG drivers use these same pins)
-// TB6612FNG Pin Functions:
-// - STBY: Standby control (HIGH=active, LOW=standby)
-// - PWMA: PWM speed control (0-255 for 8-bit, controls duty cycle)
-// - AIN1: Direction control input 1
-// - AIN2: Direction control input 2
-// - AO1/AO2: Motor output terminals (motors connected here)
+BluetoothSerial SerialBT;
 
-#define MOTOR_STBY 27   // Standby/Enable pin (shared by both TB6612FNG drivers)
-#define MOTOR_PWMA 25   // PWM speed control pin (PWMA) - shared by both drivers
-#define MOTOR_AIN1 26   // Direction control pin 1 (AIN1) - GPIO 26, shared by both drivers
-#define MOTOR_AIN2 13   // Direction control pin 2 (AIN2) - shared by both drivers
+// Motor Control
+#define MOTOR_STBY 27
+#define MOTOR_PWMA 25
+#define MOTOR_AIN1 26
+#define MOTOR_AIN2 13
 
-// Motor Connections:
-// Right TB6612FNG: 2 motors in series → connected to AO1 and AO2 outputs
-// Left TB6612FNG:  2 motors in series → connected to AO1 and AO2 outputs
+// Speed Levels
+#define SPEED_LOW 85
+#define SPEED_MEDIUM 170
+#define SPEED_HIGH 255
 
-// TB6612FNG PWM Configuration
-#define MAX_MOTOR_SPEED 255  // Maximum PWM value for 8-bit resolution (0-255)
-#define MIN_MOTOR_SPEED 50   // Minimum speed to overcome motor friction (adjust as needed)
-const int PWMFreq = 20000;  // 20 KHz - recommended for TB6612FNG (can handle up to 100 KHz)
-const int PWMResolution = 8; // 8-bit resolution (0-255)
-const int motorPWMSpeedChannel = 4; // PWM channel for speed control
+#define MIN_MOTOR_SPEED 50
+const int PWMFreq = 20000;
+const int PWMResolution = 8;
+const int motorPWMSpeedChannel = 4;
 
-// Acceleration/Deceleration Control
-#define ACCELERATION_RATE 5   // Speed change per loop (higher = faster acceleration)
-#define DECELERATION_RATE 8   // Speed change per loop when stopping (higher = faster stop)
-int currentRightSpeed = 0;    // Current actual motor speed (with acceleration)
-int currentLeftSpeed = 0;     // Current actual motor speed (with acceleration)
+int currentSpeed = SPEED_MEDIUM;
+int currentRightSpeed = 0;
+int currentLeftSpeed = 0;
 
-// Apply acceleration/deceleration smoothing to motor speeds
-void applyAcceleration(int targetRightSpeed, int targetLeftSpeed)
-{
-  // Apply acceleration/deceleration to right motor
-  if (targetRightSpeed > currentRightSpeed)
-  {
-    currentRightSpeed += ACCELERATION_RATE;
+// Motor Control Functions
+void applyAcceleration(int targetRightSpeed, int targetLeftSpeed) {
+  const int ACCEL_STEP = 5;
+  const int DECEL_STEP = 8;
+  
+  if (targetRightSpeed > currentRightSpeed) {
+    currentRightSpeed += ACCEL_STEP;
     if (currentRightSpeed > targetRightSpeed) currentRightSpeed = targetRightSpeed;
-  }
-  else if (targetRightSpeed < currentRightSpeed)
-  {
-    currentRightSpeed -= DECELERATION_RATE;
+  } else if (targetRightSpeed < currentRightSpeed) {
+    currentRightSpeed -= DECEL_STEP;
     if (currentRightSpeed < targetRightSpeed) currentRightSpeed = targetRightSpeed;
   }
   
-  // Apply acceleration/deceleration to left motor
-  if (targetLeftSpeed > currentLeftSpeed)
-  {
-    currentLeftSpeed += ACCELERATION_RATE;
+  if (targetLeftSpeed > currentLeftSpeed) {
+    currentLeftSpeed += ACCEL_STEP;
     if (currentLeftSpeed > targetLeftSpeed) currentLeftSpeed = targetLeftSpeed;
-  }
-  else if (targetLeftSpeed < currentLeftSpeed)
-  {
-    currentLeftSpeed -= DECELERATION_RATE;
+  } else if (targetLeftSpeed < currentLeftSpeed) {
+    currentLeftSpeed -= DECEL_STEP;
     if (currentLeftSpeed < targetLeftSpeed) currentLeftSpeed = targetLeftSpeed;
   }
 }
 
-void rotateMotor(int rightMotorSpeed, int leftMotorSpeed)
-{
-  // Apply acceleration/deceleration smoothing
+void rotateMotor(int rightMotorSpeed, int leftMotorSpeed) {
   applyAcceleration(rightMotorSpeed, leftMotorSpeed);
   
-  // Both TB6612FNG drivers share the same control pins (AIN1, AIN2, PWMA, STBY)
-  // Since they share pins, they move together - use average speed for direction control
   int combinedSpeed = (currentRightSpeed + currentLeftSpeed) / 2;
   
-  // TB6612FNG Direction Control Truth Table:
-  // AIN1=LOW,  AIN2=LOW  → Stop (short brake)
-  // AIN1=LOW,  AIN2=HIGH → CCW (Counter-Clockwise / Reverse)
-  // AIN1=HIGH, AIN2=LOW  → CW  (Clockwise / Forward)
-  // AIN1=HIGH, AIN2=HIGH → Stop (short brake)
+  digitalWrite(MOTOR_STBY, HIGH);
   
-  if (combinedSpeed < 0)
-  {
-    // Reverse direction: AIN1=LOW, AIN2=HIGH
+  if (combinedSpeed < 0) {
     digitalWrite(MOTOR_AIN1, LOW);
     digitalWrite(MOTOR_AIN2, HIGH);
-  }
-  else if (combinedSpeed > 0)
-  {
-    // Forward direction: AIN1=HIGH, AIN2=LOW
+  } else if (combinedSpeed > 0) {
     digitalWrite(MOTOR_AIN1, HIGH);
     digitalWrite(MOTOR_AIN2, LOW);
-  }
-  else
-  {
-    // Stop (short brake): AIN1=LOW, AIN2=LOW
+  } else {
     digitalWrite(MOTOR_AIN1, LOW);
     digitalWrite(MOTOR_AIN2, LOW);
   }
   
-  // Set PWM speed (0-255) - shared PWMA pin controls both TB6612FNG drivers
-  // PWMA controls the speed/duty cycle of the motor output
-  // Apply minimum speed threshold to overcome motor friction
   int pwmValue = abs(combinedSpeed);
   if (pwmValue > 0 && pwmValue < MIN_MOTOR_SPEED) {
-    pwmValue = MIN_MOTOR_SPEED;  // Minimum speed to start motor
+    pwmValue = MIN_MOTOR_SPEED;
   }
   ledcWrite(motorPWMSpeedChannel, pwmValue);
 }
 
-void setUpPinModes()
-{
-  // TB6612FNG Pin Configuration
-  // Configure all control pins as outputs
-  pinMode(MOTOR_AIN1, OUTPUT);   // Direction control pin 1
-  pinMode(MOTOR_AIN2, OUTPUT);   // Direction control pin 2
-  pinMode(MOTOR_PWMA, OUTPUT);   // PWM speed control pin
-  pinMode(MOTOR_STBY, OUTPUT);   // Standby/Enable pin
+void stopMotors() {
+  rotateMotor(0, 0);
+}
 
-  // TB6612FNG STBY Pin Control:
-  // STBY = LOW  → Standby mode (all outputs disabled, low power consumption)
-  // STBY = HIGH → Active mode (normal operation)
-  digitalWrite(MOTOR_STBY, HIGH);  // Enable both TB6612FNG drivers
+void driveForward(int speed) {
+  rotateMotor(speed, speed);
+}
 
-  // Initialize direction pins to stop position (short brake)
+void turnLeft(int speed) {
+  rotateMotor(speed, -speed);
+}
+
+void turnRight(int speed) {
+  rotateMotor(-speed, speed);
+}
+
+void driveBackward(int speed) {
+  rotateMotor(-speed, -speed);
+}
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+  
+  Serial.println("========================================");
+  Serial.println("  BLUETOOTH CONTROLLED DRIVING");
+  Serial.println("========================================");
+  Serial.println();
+  
+  // Initialize motor pins
+  pinMode(MOTOR_AIN1, OUTPUT);
+  pinMode(MOTOR_AIN2, OUTPUT);
+  pinMode(MOTOR_PWMA, OUTPUT);
+  pinMode(MOTOR_STBY, OUTPUT);
+  digitalWrite(MOTOR_STBY, HIGH);
   digitalWrite(MOTOR_AIN1, LOW);
   digitalWrite(MOTOR_AIN2, LOW);
-
-  // Set up ESP32 PWM for speed control
-  // TB6612FNG can handle PWM frequencies up to 100 KHz
-  // Using 20 KHz for smooth motor operation and reduced audible noise
+  
+  // Setup PWM
   ledcSetup(motorPWMSpeedChannel, PWMFreq, PWMResolution);
-  ledcAttachPin(MOTOR_PWMA, motorPWMSpeedChannel);  // Attach PWMA pin to PWM channel
+  ledcAttachPin(MOTOR_PWMA, motorPWMSpeedChannel);
   
-  // Initialize motors to stopped state
-  rotateMotor(0, 0); 
+  // Initialize Bluetooth
+  SerialBT.begin("ESP32_Car");
+  Serial.println("Bluetooth initialized");
+  Serial.println("Device name: ESP32_Car");
+  Serial.println();
+  Serial.println("Commands:");
+  Serial.println("  F - Forward");
+  Serial.println("  B - Backward");
+  Serial.println("  L - Turn Left");
+  Serial.println("  R - Turn Right");
+  Serial.println("  S - Stop");
+  Serial.println("  1 - Low speed");
+  Serial.println("  2 - Medium speed");
+  Serial.println("  3 - High speed");
+  Serial.println();
+  Serial.println("Waiting for Bluetooth connection...");
 }
 
-void setup()
-{
-  Serial.begin(115200);
-  setUpPinModes();
-  Dabble.begin("MyBluetoothCar");
-  Serial.println("Bluetooth Car Ready! Connect via Dabble app.");
-}
-
-void loop()
-{
-  int rightMotorSpeed = 0;
-  int leftMotorSpeed = 0;
-  
-  Dabble.processInput();
-  
-  // Check for joystick/analog control
-  // Get joystick X and Y values (returns float, typically -100 to +100)
-  float joystickX = GamePad.getXaxisData();  // Left/Right control
-  float joystickY = GamePad.getYaxisData();  // Forward/Backward control
-  
-  // Check if joystick is being used (non-zero values)
-  if (abs(joystickX) > 0.1 || abs(joystickY) > 0.1)
-  {
-    // Convert joystick values to motor speeds (-255 to +255)
-    // Y-axis controls forward/backward (throttle)
-    // X-axis controls left/right (steering)
+void loop() {
+  // Check Bluetooth commands
+  if (SerialBT.available()) {
+    char cmd = SerialBT.read();
+    Serial.print("Received: ");
+    Serial.println(cmd);
     
-    int throttle = map((int)joystickY, -100, 100, -MAX_MOTOR_SPEED, MAX_MOTOR_SPEED);
-    int steering = map((int)joystickX, -100, 100, -MAX_MOTOR_SPEED, MAX_MOTOR_SPEED);
-    
-    // Differential drive: throttle + steering for turning
-    rightMotorSpeed = throttle - steering;  // Right motor: throttle minus steering
-    leftMotorSpeed = throttle + steering;   // Left motor: throttle plus steering
-    
-    // Limit speeds to valid range
-    rightMotorSpeed = constrain(rightMotorSpeed, -MAX_MOTOR_SPEED, MAX_MOTOR_SPEED);
-    leftMotorSpeed = constrain(leftMotorSpeed, -MAX_MOTOR_SPEED, MAX_MOTOR_SPEED);
-  }
-  // Fallback to button control if joystick not being used
-  else
-  {
-    // Variable speed control using buttons with speed increments
-    static int speedLevel = 0;  // Current speed level (0-5 for 0%, 20%, 40%, 60%, 80%, 100%)
-    int speedIncrement = MAX_MOTOR_SPEED / 5;  // 51 steps per level
-    
-    // Speed adjustment buttons (if available)
-    if (GamePad.isTrianglePressed())  // Increase speed
-    {
-      speedLevel++;
-      if (speedLevel > 5) speedLevel = 5;
-    }
-    if (GamePad.isCrossPressed())  // Decrease speed
-    {
-      speedLevel--;
-      if (speedLevel < 0) speedLevel = 0;
-    }
-    
-    int currentMaxSpeed = speedLevel * speedIncrement;
-    
-    // Direction control with variable speed
-    if (GamePad.isUpPressed())
-    {
-      rightMotorSpeed = currentMaxSpeed;
-      leftMotorSpeed = currentMaxSpeed;
-    }
-    else if (GamePad.isDownPressed())
-    {
-      rightMotorSpeed = -currentMaxSpeed;
-      leftMotorSpeed = -currentMaxSpeed;
-    }
-    else if (GamePad.isLeftPressed())
-    {
-      rightMotorSpeed = currentMaxSpeed;
-      leftMotorSpeed = -currentMaxSpeed;
-    }
-    else if (GamePad.isRightPressed())
-    {
-      rightMotorSpeed = -currentMaxSpeed;
-      leftMotorSpeed = currentMaxSpeed;
-    }
-    else
-    {
-      // No button pressed - stop motors
-      rightMotorSpeed = 0;
-      leftMotorSpeed = 0;
+    switch (cmd) {
+      case 'F':
+      case 'f':
+        driveForward(currentSpeed);
+        SerialBT.println("Forward");
+        Serial.println("Forward");
+        break;
+        
+      case 'B':
+      case 'b':
+        driveBackward(currentSpeed);
+        SerialBT.println("Backward");
+        Serial.println("Backward");
+        break;
+        
+      case 'L':
+      case 'l':
+        turnLeft(currentSpeed);
+        SerialBT.println("Turn Left");
+        Serial.println("Turn Left");
+        break;
+        
+      case 'R':
+      case 'r':
+        turnRight(currentSpeed);
+        SerialBT.println("Turn Right");
+        Serial.println("Turn Right");
+        break;
+        
+      case 'S':
+      case 's':
+        stopMotors();
+        SerialBT.println("Stop");
+        Serial.println("Stop");
+        break;
+        
+      case '1':
+        currentSpeed = SPEED_LOW;
+        SerialBT.println("Speed: LOW");
+        Serial.println("Speed: LOW");
+        break;
+        
+      case '2':
+        currentSpeed = SPEED_MEDIUM;
+        SerialBT.println("Speed: MEDIUM");
+        Serial.println("Speed: MEDIUM");
+        break;
+        
+      case '3':
+        currentSpeed = SPEED_HIGH;
+        SerialBT.println("Speed: HIGH");
+        Serial.println("Speed: HIGH");
+        break;
+        
+      default:
+        SerialBT.println("Unknown command");
+        Serial.println("Unknown command");
+        break;
     }
   }
-
-  // Apply motor control with acceleration
-  rotateMotor(rightMotorSpeed, leftMotorSpeed);
   
-  // Small delay for smooth operation
+  // Also check Serial for debugging
+  if (Serial.available()) {
+    char cmd = Serial.read();
+    
+    switch (cmd) {
+      case 'F':
+      case 'f':
+        driveForward(currentSpeed);
+        Serial.println("Forward");
+        break;
+        
+      case 'B':
+      case 'b':
+        driveBackward(currentSpeed);
+        Serial.println("Backward");
+        break;
+        
+      case 'L':
+      case 'l':
+        turnLeft(currentSpeed);
+        Serial.println("Turn Left");
+        break;
+        
+      case 'R':
+      case 'r':
+        turnRight(currentSpeed);
+        Serial.println("Turn Right");
+        break;
+        
+      case 'S':
+      case 's':
+        stopMotors();
+        Serial.println("Stop");
+        break;
+        
+      case '1':
+        currentSpeed = SPEED_LOW;
+        Serial.println("Speed: LOW");
+        break;
+        
+      case '2':
+        currentSpeed = SPEED_MEDIUM;
+        Serial.println("Speed: MEDIUM");
+        break;
+        
+      case '3':
+        currentSpeed = SPEED_HIGH;
+        Serial.println("Speed: HIGH");
+        break;
+        
+      default:
+        break;
+    }
+    
+    while (Serial.available()) Serial.read();
+  }
+  
   delay(10);
 }
 
