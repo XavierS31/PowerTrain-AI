@@ -45,6 +45,9 @@ Adafruit_ST7735 tft = Adafruit_ST7735(TFT_CS, TFT_DC, TFT_RST);
 #define TEAL      0x0410
 #define NAVY      0x000F
 
+// Global variable to store calculated Rint
+float calculatedRint = 0.0;
+
 // Initialize TFT Display
 void initTFT() {
   Serial.println("Initializing TFT Display...");
@@ -98,42 +101,87 @@ void initTFT() {
   Serial.println("If display is still white, check wiring and power connections");
 }
 
-// Display Car Driving Behavior Performance (0-100%)
-// Shows hardcoded static values - COMPLETELY IGNORES all parameters
-// NO sensor data dependency - all values are hardcoded
-void displayPerformance(float performancePercent, float rint, float voltage, float current) {
-  // IGNORE ALL PARAMETERS - Use only hardcoded values
-  // HARDCODED VALUES - No actual measurements used, no sensor dependency
-  const float HARDCODED_PERFORMANCE = 50.0;  // Fixed 50% performance
-  const float HARDCODED_RINT = 0.7;          // Fixed 0.7 ohm (realistic internal resistance for AA batteries)
-  const float HARDCODED_VOLTAGE = 6.0;        // Fixed 6.0V (4-pack 1.5V AA batteries = 6V)
-  const float HARDCODED_TEMPERATURE = 30.0;   // Fixed 30°C (realistic temp for AA batteries after mid-use)
+// Display Car Driving Behavior Performance (0-10 level with bar)
+// Uses actual sensor values to calculate RINT and performance level
+void displayPerformance(float performancePercent, float rint, float voltage, float current, float temperature) {
+  // Calculate internal resistance from voltage and current
+  // RINT = (V_nominal - V_actual) / I when under load
+  // Or: RINT = V / I (effective resistance)
+  const float V_NOMINAL = 12.0;  // Nominal battery voltage (adjust to your battery)
   
-  // Use hardcoded values (ignore all parameters)
-  performancePercent = HARDCODED_PERFORMANCE;
-  rint = HARDCODED_RINT;
-  voltage = HARDCODED_VOLTAGE;
-  float temperature = HARDCODED_TEMPERATURE;
+  float localRint = 0.0;
+  if (abs(current) > 0.01) {  // Avoid division by zero
+    float voltageDrop = V_NOMINAL - voltage;
+    if (voltageDrop > 0) {
+      localRint = voltageDrop / abs(current);
+    } else {
+      // If voltage is higher than nominal, use direct calculation
+      localRint = voltage / abs(current);
+    }
+    
+    // Constrain RINT to reasonable range (0.01 to 2.0 ohms)
+    if (localRint < 0.01) localRint = 0.01;
+    if (localRint > 2.0) localRint = 2.0;
+  } else {
+    // No current flow, use default or last known good value
+    if (rint > 0) {
+      localRint = rint;  // Use provided RINT if available
+    } else {
+      localRint = 0.1;  // Default healthy battery RINT
+    }
+  }
   
-  // Constrain percentage to 0-100
-  if (performancePercent < 0) performancePercent = 0;
-  if (performancePercent > 100) performancePercent = 100;
+  // Store calculated RINT globally
+  calculatedRint = localRint;
+  
+  // Calculate performance level (0-10) from RINT
+  // Lower RINT = better performance = higher level
+  const float RINT_BASELINE = 0.05;  // Excellent performance baseline (50 mΩ)
+  const float RINT_MAX = 1.0;        // Poor performance threshold (1.0 Ω)
+  
+  float performanceLevel = 10.0;  // Default to best
+  
+  if (localRint <= RINT_BASELINE) {
+    performanceLevel = 10.0;  // Excellent
+  } else if (localRint >= RINT_MAX) {
+    performanceLevel = 0.0;   // Poor
+  } else {
+    // Linear interpolation: RINT_BASELINE = 10, RINT_MAX = 0
+    float rintRange = RINT_MAX - RINT_BASELINE;
+    float rintExcess = localRint - RINT_BASELINE;
+    performanceLevel = 10.0 * (1.0 - (rintExcess / rintRange));
+  }
+  
+  // Apply voltage penalty (very low voltage reduces performance)
+  if (voltage < 9.0) {
+    performanceLevel *= 0.5;  // Severe penalty
+  } else if (voltage < 10.0) {
+    performanceLevel *= 0.8;  // Moderate penalty
+  }
+  
+  // Constrain to 0-10
+  if (performanceLevel < 0) performanceLevel = 0;
+  if (performanceLevel > 10) performanceLevel = 10;
+  
+  // Use calculated values
+  rint = localRint;
+  performancePercent = performanceLevel * 10.0;  // Convert 0-10 to 0-100% for display
   
   // Always clear and redraw to ensure display updates
   tft.fillScreen(BLACK);
   delay(10);  // Small delay to ensure screen clear
   
-  // Title: "Car Driving Performance" - CENTERED
+  // Title: "Performance Level" - CENTERED
   tft.setTextColor(CYAN);
   tft.setTextSize(1);
   
   // Center the title text
   int16_t x1, y1;
   uint16_t w, h;
-  tft.getTextBounds("Car Driving Performance", 0, 0, &x1, &y1, &w, &h);
+  tft.getTextBounds("Performance Level", 0, 0, &x1, &y1, &w, &h);
   int titleX = (TFT_WIDTH - w) / 2;
   tft.setCursor(titleX, 5);
-  tft.println("Car Driving Performance");
+  tft.println("Performance Level");
   
   // Draw three boxes side by side for Rint, Voltage, Temperature
   int boxWidth = 38;
@@ -185,7 +233,7 @@ void displayPerformance(float performancePercent, float rint, float voltage, flo
   tft.setCursor(box2X + 2, startY + 22);
   tft.print("V");
   
-  // Box 3: Temperature (replaced Current)
+  // Box 3: Temperature (use parameter)
   int box3X = box2X + boxWidth + boxSpacing;
   tft.drawRect(box3X, startY, boxWidth, boxHeight, LIGHT_GREEN);
   tft.fillRect(box3X + 1, startY + 1, boxWidth - 2, boxHeight - 2, DARK_GRAY);
@@ -204,23 +252,54 @@ void displayPerformance(float performancePercent, float rint, float voltage, flo
   tft.setCursor(box3X + 2, startY + 22);
   tft.print("°C");
   
-  // Draw progress bar background (underneath the boxes)
+  // Add Current display below the boxes
+  int currentY = startY + boxHeight + 5;
+  tft.drawRect(startX, currentY, boxWidth, boxHeight, ORANGE);
+  tft.fillRect(startX + 1, currentY + 1, boxWidth - 2, boxHeight - 2, DARK_GRAY);
+  tft.setTextColor(ORANGE);
+  tft.setTextSize(1);
+  tft.setCursor(startX + 2, currentY + 2);
+  tft.println("Curr");
+  char currentStr[10];
+  sprintf(currentStr, "%.2f", current);
+  tft.setTextColor(WHITE);
+  tft.setTextSize(1);
+  tft.setCursor(startX + 2, currentY + 12);
+  tft.print(currentStr);
+  tft.setTextColor(GRAY);
+  tft.setTextSize(1);
+  tft.setCursor(startX + 2, currentY + 22);
+  tft.print("A");
+  
+  // Draw performance level bar (0-10) below current box
   int barX = 10;
-  int barY = 63;  // Moved up since boxes are higher
+  int barY = currentY + boxHeight + 8;  // Below current box
   int barWidth = TFT_WIDTH - 20;
-  int barHeight = 18;
+  int barHeight = 20;
   
   // Background rectangle with subtle border
   tft.fillRect(barX, barY, barWidth, barHeight, DARK_GRAY);
   tft.drawRect(barX, barY, barWidth, barHeight, GRAY);
   
-  // Calculate filled width based on percentage
-  int filledWidth = (int)((performancePercent / 100.0) * (barWidth - 2));
+  // Calculate filled width based on performance level (0-10)
+  float performanceLevel = performancePercent / 10.0;  // Convert back to 0-10
+  int filledWidth = (int)((performanceLevel / 10.0) * (barWidth - 2));
   
-  // Draw filled portion in GREEN with gradient effect
+  // Draw filled portion with color based on performance level
+  uint16_t barColor;
+  if (performanceLevel >= 8) {
+    barColor = GREEN;  // Excellent (8-10)
+  } else if (performanceLevel >= 6) {
+    barColor = CYAN;   // Good (6-7)
+  } else if (performanceLevel >= 4) {
+    barColor = AMBER;  // Fair (4-5)
+  } else {
+    barColor = ORANGE; // Poor (0-3)
+  }
+  
   if (filledWidth > 0) {
-    // Main green fill
-    tft.fillRect(barX + 1, barY + 1, filledWidth, barHeight - 2, GREEN);
+    // Main fill
+    tft.fillRect(barX + 1, barY + 1, filledWidth, barHeight - 2, barColor);
     
     // Add subtle highlight at top for depth
     if (filledWidth > 3) {
@@ -228,42 +307,41 @@ void displayPerformance(float performancePercent, float rint, float voltage, flo
     }
   }
   
-  // Percentage and Status text at bottom - together
-  // For 50% performance, status is "Fair"
+  // Display performance level (0-10) and status text
   const char* status;
   uint16_t statusColor;
-  if (performancePercent >= 80) {
+  if (performanceLevel >= 8) {
     status = "Excellent";
     statusColor = LIGHT_GREEN;
-  } else if (performancePercent >= 60) {
+  } else if (performanceLevel >= 6) {
     status = "Good";
     statusColor = CYAN;
-  } else if (performancePercent >= 40) {
-    status = "Fair";  // 50% falls here
+  } else if (performanceLevel >= 4) {
+    status = "Fair";
     statusColor = AMBER;
   } else {
     status = "Poor";
     statusColor = ORANGE;
   }
   
-  // Create combined string: "85% Excellent"
+  // Create combined string: "Level: 7 Good"
   char combinedStr[25];
-  sprintf(combinedStr, "%.0f%% %s", performancePercent, status);
+  sprintf(combinedStr, "Level: %.0f %s", performanceLevel, status);
   
   // Center the combined text
   tft.setTextColor(statusColor);
-  tft.setTextSize(2);  // Larger text for percentage and status
+  tft.setTextSize(1);  // Smaller text to fit
   tft.getTextBounds(combinedStr, 0, 0, &x1, &y1, &w, &h);
   int combinedX = (TFT_WIDTH - w) / 2;
-  tft.setCursor(combinedX, 88);  // Position below progress bar
+  tft.setCursor(combinedX, barY + barHeight + 5);  // Position below progress bar
   tft.print(combinedStr);
 }
 
 // Update performance display (call this in your main loop)
-void updatePerformanceDisplay(float performancePercent, float rint, float voltage, float current) {
+void updatePerformanceDisplay(float performancePercent, float rint, float voltage, float current, float temperature) {
   // Prevent TFT from turning off by refreshing display
   // This ensures the screen stays on
-  displayPerformance(performancePercent, rint, voltage, current);
+  displayPerformance(performancePercent, rint, voltage, current, temperature);
   
   // Optional: Send a keep-alive signal to prevent display sleep
   // Some displays have auto-sleep, this prevents it
@@ -415,7 +493,10 @@ float getCalculatedRint() {
 }
 */
 
-// Return hardcoded Rint value for compatibility
+// Global variable to store calculated Rint
+float calculatedRint = 0.0;
+
+// Get the calculated Rint value
 float getCalculatedRint() {
-  return 0.10;  // Hardcoded 0.10 ohm
+  return calculatedRint;
 }
