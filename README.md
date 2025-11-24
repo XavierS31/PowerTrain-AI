@@ -4,11 +4,11 @@ PowerTrain AI is a comprehensive autonomous car system powered by ESP32, featuri
 
 ## 🚀 Overview
 
-PowerTrain AI combines embedded systems engineering with machine learning to create an intelligent autonomous car that adapts its driving behavior based on real-time performance predictions. The system collects sensor data from multiple sources (temperature, voltage, current, acceleration, distance), processes it through trained ML models, and uses predictions to optimize autonomous driving decisions in real-time.
+PowerTrain AI combines embedded systems engineering with machine learning to create an intelligent autonomous car that adapts its driving behavior based on real-time performance predictions. The system collects sensor data from multiple sources (temperature, voltage, current, acceleration, distance), processes it through ML models which are later tested, and uses predictions to optimize autonomous driving decisions in real-time.
 
 The project consists of three main components:
 - **Embedded System**: ESP32-based car with sensor integration and autonomous driving logic
-- **Machine Learning**: Three ML models (PyTorch NN, scikit-learn MLP, Random Forest) for performance prediction
+- **Machine Learning**: Tested Three ML models (PyTorch Neural Network, scikit-learn MLP, Random Forest Algortihm) for performance prediction and pick the best results.
 - **Data Infrastructure**: Flask servers for data collection, ML predictions, and database management
 
 ## ⚙️ Features
@@ -31,7 +31,7 @@ The project consists of three main components:
 - **Infrared Obstacle Detection**: TCRT5000 IR sensor (GPIO 36/39) for close-range detection
 - **Speed Measurement**: Encoder-based speed calculation from motor rotations
 
-### 🧠 Machine Learning Models
+### 🧠 Machine Learning Models Tested
 
 #### PyTorch Neural Network
 - **Architecture**: 2 hidden layers with 16 neurons each
@@ -45,14 +45,14 @@ The project consists of three main components:
 - **Framework**: scikit-learn
 - **Solver**: Adam optimizer
 - **Output**: Performance level classification (1-10)
-- **Saved as**: `mlp_model.joblib`
+- **Saved as**: `mlp_model.py`
 
 #### Random Forest Classifier
 - **Parameters**: 100 decision trees, max depth 20
 - **Framework**: scikit-learn
 - **Features**: Feature importance analysis
 - **Output**: Performance level classification (1-10)
-- **Saved as**: `random_forest_model.joblib`
+- **Saved as**: `random_forest_model.py`
 
 ### 📡 Data Infrastructure
 
