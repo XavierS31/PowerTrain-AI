@@ -27,7 +27,7 @@ load_dotenv(env_path)
 
 app = Flask(__name__)
 
-# ========== CONFIGURATION (from .env file) ==========
+# Configuration (from .env file)
 # Choose which formats to save (set to True/False in .env file)
 SAVE_JSON = os.getenv('SAVE_JSON', 'true').lower() == 'true'
 SAVE_CSV = os.getenv('SAVE_CSV', 'true').lower() == 'true'  # CSV enabled by default

@@ -1,0 +1,11 @@
+madhephaestus/ESP32AnalogRead
+adafruit/Adafruit MPU6050
+teckel12/NewPing
+adafruit/Adafruit GFX Library
+adafruit/Adafruit Unified Sensor
+paulstoffregen/Encoder
+adafruit/Adafruit ST7735 and ST7789 Library
+paulstoffregen/OneWire
+bblanchon/ArduinoJson
+milesburton/DallasTemperature
+adafruit/Adafruit INA219@^1.2.3

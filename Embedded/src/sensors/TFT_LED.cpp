@@ -99,13 +99,21 @@ void initTFT() {
 }
 
 // Display Car Driving Behavior Performance (0-100%)
-// Shows hardcoded static values - no sensor data dependency
+// Shows hardcoded static values - COMPLETELY IGNORES all parameters
+// NO sensor data dependency - all values are hardcoded
 void displayPerformance(float performancePercent, float rint, float voltage, float current) {
-  // HARDCODED VALUES - No actual measurements used
-  performancePercent = 50.0;  // Fixed 50% performance
-  rint = 0.7;                 // Fixed 0.7 ohm (realistic internal resistance for AA batteries)
-  voltage = 6.0;              // Fixed 6.0V (4-pack 1.5V AA batteries = 6V)
-  float temperature = 30.0;   // Fixed 30°C (realistic temp for AA batteries after mid-use)
+  // IGNORE ALL PARAMETERS - Use only hardcoded values
+  // HARDCODED VALUES - No actual measurements used, no sensor dependency
+  const float HARDCODED_PERFORMANCE = 50.0;  // Fixed 50% performance
+  const float HARDCODED_RINT = 0.7;          // Fixed 0.7 ohm (realistic internal resistance for AA batteries)
+  const float HARDCODED_VOLTAGE = 6.0;        // Fixed 6.0V (4-pack 1.5V AA batteries = 6V)
+  const float HARDCODED_TEMPERATURE = 30.0;   // Fixed 30°C (realistic temp for AA batteries after mid-use)
+  
+  // Use hardcoded values (ignore all parameters)
+  performancePercent = HARDCODED_PERFORMANCE;
+  rint = HARDCODED_RINT;
+  voltage = HARDCODED_VOLTAGE;
+  float temperature = HARDCODED_TEMPERATURE;
   
   // Constrain percentage to 0-100
   if (performancePercent < 0) performancePercent = 0;
