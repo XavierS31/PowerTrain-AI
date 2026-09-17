@@ -646,3 +646,5 @@ This project is open source and available for educational and research purposes.
 ---
 
 **Built with passion for autonomous systems and machine learning** ⚡🚗
+
+**Resulted in first place for SHPE FALL 2025 Competitions**
